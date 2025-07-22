@@ -37,4 +37,61 @@ export class TransactionController extends BaseController {
 
     res.json({ transactionId, status: 'pending' });
   });
+
+   /**
+   * POST /api/transaction/execute
+   * Body: { transactionId, pinVerified, finalConfirmation }
+   */
+  execute = this.handle(async (req, res) => {
+    const { transactionId, pinVerified, finalConfirmation } = req.body;
+    const txn = transactions[transactionId];
+
+    if (!txn) {
+      return res.status(404).json({ error: 'Transaction not found' });
+    }
+    if (!pinVerified || !finalConfirmation) {
+      txn.status = 'failed';
+      return res.status(400).json({ error: 'Verification failed' });
+    }
+
+    txn.status = 'successful';
+    txn.completedAt = new Date().toISOString();
+
+    res.json({
+      transactionId: txn.transactionId,
+      status: txn.status
+    });
+  });
+
+  /**
+   * GET /api/transaction/status/:transactionId
+   * Returns status, newBalance, referenceNumber, timestamp, errorMessage
+   */
+  status = this.handle(async (req, res) => {
+    const { transactionId } = req.params;
+    const txn = transactions[transactionId];
+
+    if (!txn) {
+      return res.status(404).json({ error: 'Transaction not found' });
+    }
+
+    // For demo, referenceNumber = T + first 9 chars of ID
+    const referenceNumber = 'T' + transactionId.replace(/-/g, '').substring(0, 9);
+    const user = users['user123'];
+
+    res.json({
+      transactionId:   txn.transactionId,
+      status:          txn.status,
+      newBalance:      user.balance,
+      referenceNumber,
+      timestamp:       txn.completedAt || txn.createdAt,
+      errorMessage:    txn.status === 'failed' ? 'Verification failed or insufficient funds' : null
+    });
+  });
 }
+
+
+
+
+
+
