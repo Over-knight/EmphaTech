@@ -4,8 +4,8 @@ import { BankController } from '../controllers/BankController.js';
 import { TransactionController } from '../controllers/TransactionController.js';
 import { AccountController } from '../controllers/AccountController.js';
 import { RechargeController } from '../controllers/RechargeController.js';
-import { SendController } from '../controllers/sendController.js';
 import { UIController } from '../controllers/UIController.js';
+import { SendController } from '../controllers/SendController.js';
 
 export function loadRoutes(app) {
   const router = express.Router();
