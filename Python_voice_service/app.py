@@ -20,6 +20,19 @@ load_dotenv()
 from num2words import num2words
 
 app = FastAPI()
+from fastapi.middleware.cors import CORSMiddleware
+
+origins = [
+    "*",  "http://localhost:5173"
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Whisper model is loaded once for efficiency
 whisper_model = whisper.load_model("base")
