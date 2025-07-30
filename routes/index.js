@@ -1,7 +1,7 @@
 import express from 'express';
 import { UserController } from '../controllers/UserController.js';
 import { BankController } from '../controllers/BankController.js';
-import { TransactionController } from '../controllers/transactionController.js';
+import { TransactionController } from '../controllers/TransactionController.js';
 import { AccountController } from '../controllers/AccountController.js';
 import { RechargeController } from '../controllers/RechargeController.js';
 import { SendController } from '../controllers/sendController.js';
