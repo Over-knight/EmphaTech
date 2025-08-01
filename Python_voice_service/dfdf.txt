@@ -1,0 +1,1 @@
+print(f"Base64 length for {audio_file}: {len(audio_b64)}")
