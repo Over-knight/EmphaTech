@@ -452,7 +452,33 @@ GET /voice/available-voices
 
 ---
 
-### 10. Voice Conversation (Main Endpoint)
+### 10. Welcome After Login
+```http
+POST /voice/welcome-after-login
+```
+
+**Request Body:**
+```json
+{
+  "userId": "user123",
+  "userName": "Empha",
+  "voiceId": "Joanna",
+  "voiceSpeed": "medium"
+}
+```
+
+**Response:**
+```json
+{
+  "status": "success",
+  "sessionId": "user-user123-1234567890",
+  "prompt": "Welcome back Empha! Your current balance is one hundred and fifty thousand Naira. How may I help you today? You can say 'transfer money', 'check balance', 'purchase airtime', or 'purchase data'.",
+  "prompt_audio": "base64-encoded-mp3-audio",
+  "step": "awaiting_action"
+}
+```
+
+### 11. Voice Conversation (Main Endpoint)
 ```http
 POST /voice/converse
 ```
@@ -560,4 +586,4 @@ AWS_REGION=us-east-1
 - Current balance: ₦150,000.00
 - Voice service requires AWS Polly for TTS
 - Audio must be base64-encoded MP3 format
-- Session management is in-memory (resets on server restart) 
+- Session management is in-memory (resets on server restart)

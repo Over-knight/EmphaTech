@@ -7,6 +7,7 @@ from botocore.exceptions import ClientError, NoCredentialsError
 import whisper
 import tempfile
 import os
+import time
 # Set ffmpeg/ffprobe path for pydub before importing AudioSegment
 ffmpeg_bin_dir = r"C:\Users\Hp\Downloads\ffmpeg-7.0.2-essentials_build\ffmpeg-7.0.2-essentials_build\bin"
 os.environ["PATH"] += os.pathsep + ffmpeg_bin_dir
@@ -178,7 +179,7 @@ class VoiceCommandRequest(BaseModel):
     sessionId: str
     context: dict
 
-@app.post("/voice/process-command")
+@app.post("api/voice/process-command")
 async def process_command(request: VoiceCommandRequest):
     import requests
     try:
@@ -242,7 +243,7 @@ class ConfirmAmountRequest(BaseModel):
     expectedAmount: float
     spokenAmount: str
 
-@app.post("/voice/confirm-amount")
+@app.post("api/voice/confirm-amount")
 async def confirm_amount(request: ConfirmAmountRequest):
     try:
         audio_bytes = base64.b64decode(request.voiceData)
@@ -266,7 +267,7 @@ class CaptureAccountRequest(BaseModel):
     partialNumber: str = None
     context: str
 
-@app.post("/voice/capture-account")
+@app.post("api/voice/capture-account")
 async def capture_account(request: CaptureAccountRequest):
     try:
         audio_bytes = base64.b64decode(request.voiceData)
@@ -289,7 +290,7 @@ class RecognizeBankRequest(BaseModel):
     spokenBank: str
     context: str
 
-@app.post("/voice/recognize-bank")
+@app.post("api/voice/recognize-bank")
 async def recognize_bank(request: RecognizeBankRequest):
     try:
         audio_bytes = base64.b64decode(request.voiceData)
@@ -312,7 +313,7 @@ class VerifyPinRequest(BaseModel):
     transactionId: str
     sessionId: str
 
-@app.post("/voice/verify-pin")
+@app.post("api/voice/verify-pin")
 async def verify_pin(request: VerifyPinRequest):
     try:
         audio_bytes = base64.b64decode(request.voiceData)
@@ -338,7 +339,7 @@ class FinalConfirmationRequest(BaseModel):
     accountNumber: str
     voiceId: str = "Joanna"  # Allow voice customization
 
-@app.post("/voice/final-confirmation")
+@app.post("api/voice/final-confirmation")
 async def final_confirmation(request: FinalConfirmationRequest):
     try:
         text = f"Transaction {request.transactionId}: Send ${request.amount:.2f} to {request.recipientName} at {request.recipientBank}, account number {request.accountNumber}. Please confirm this transaction."
@@ -353,7 +354,7 @@ async def final_confirmation(request: FinalConfirmationRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 # New endpoint to get available voices
-@app.get("/voice/available-voices")
+@app.get("api/voice/available-voices")
 async def get_available_voices():
     """Get list of available Polly voices"""
     if not polly_client:
@@ -384,11 +385,69 @@ HARDCODED_AMOUNT_NUM = 5000
 # In-memory session state
 sessions = {}
 
+# New endpoint for welcome after login
+class WelcomeRequest(BaseModel):
+    userId: str
+    userName: str
+    voiceId: str = "Joanna"  # Default voice
+    voiceSpeed: str = "medium"  # Default speed
+
+@app.post("api/voice/welcome-after-login")
+async def welcome_after_login(request: WelcomeRequest):
+    try:
+        # Get user balance from the backend API
+        import requests
+        resp = requests.get("http://localhost:3000/api/account/balance")
+        balance = 0.0
+        if resp.ok:
+            data = resp.json()
+            balance = data.get("balance", 0.0)
+        
+        # Format balance as words
+        amount_words = num2words(balance, lang='en')
+        
+        # Create welcome message with options
+        welcome_text = f"Welcome back {request.userName}! Your current balance is {amount_words} Naira. How may I help you today? You can say 'transfer money', 'check balance', 'purchase airtime', or 'purchase data'."
+        
+        # Map voice speed to Polly speech rates
+        speed_mapping = {
+            "slow": "slow",
+            "normal": "medium",
+            "fast": "fast"
+        }
+        speech_rate = speed_mapping.get(request.voiceSpeed.lower(), "medium")
+        
+        # Generate audio for welcome message
+        audio_base64 = generate_speech_with_polly(
+            text=welcome_text,
+            voice_id=request.voiceId,
+            speech_rate=speech_rate
+        )
+        
+        # Create a new session for this user with initial state
+        session_id = f"user-{request.userId}-{int(time.time())}"
+        sessions[session_id] = {
+            "step": "awaiting_action",
+            "userId": request.userId,
+            "userName": request.userName,
+            "balance": balance
+        }
+        
+        return {
+            "status": "success",
+            "sessionId": session_id,
+            "prompt": welcome_text,
+            "prompt_audio": audio_base64,
+            "step": "awaiting_action"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 class ConverseRequest(BaseModel):
     voiceData: str  # base64-encoded mp3 audio
     sessionId: str
 
-@app.post("/voice/converse")
+@app.post("api/voice/converse")
 async def voice_converse(request: ConverseRequest):
     # Get or create session
     session = sessions.setdefault(request.sessionId, {"step": "welcome"})
@@ -418,7 +477,7 @@ async def voice_converse(request: ConverseRequest):
     result = whisper_model.transcribe(temp_wav_path)
     transcript = result["text"].strip().lower()
 
-    # Refactored state machine for more natural flow
+    # Enhanced state machine for more natural flow
     if session["step"] == "welcome":
         if "transfer" in transcript:
             session["step"] = "awaiting_account"
@@ -427,11 +486,22 @@ async def voice_converse(request: ConverseRequest):
             session["step"] = "awaiting_action"
             prompt = "Welcome to EmphaTech, how may I help you today? Do you want to transfer, purchase airtime, or purchase data?"
     elif session["step"] == "awaiting_action":
-        if "transfer" in transcript:
+        if "transfer" in transcript or "send money" in transcript:
             session["step"] = "awaiting_account"
             prompt = "Kindly state the account number."
+        elif "balance" in transcript or "check balance" in transcript:
+            # Get user's balance if available in session
+            balance = session.get("balance", 0.0)
+            amount_words = num2words(balance, lang='en')
+            prompt = f"Your current balance is {amount_words} Naira. Is there anything else I can help you with?"
+        elif "airtime" in transcript:
+            session["step"] = "awaiting_airtime_number"
+            prompt = "Please provide the phone number for the airtime recharge."
+        elif "data" in transcript:
+            session["step"] = "awaiting_data_number"
+            prompt = "Please provide the phone number for the data purchase."
         else:
-            prompt = "Sorry, I can only help with transfers for now. Please say 'transfer'."
+            prompt = "I can help with transfers, checking balance, purchasing airtime, or purchasing data. What would you like to do?"
     elif session["step"] == "awaiting_account":
         session["step"] = "awaiting_bank"
         prompt = "Which bank?"
@@ -451,8 +521,44 @@ async def voice_converse(request: ConverseRequest):
             prompt = "Transaction successful!"
         else:
             prompt = "Say 'send' to confirm the transaction."
+    # Handle airtime flow
+    elif session["step"] == "awaiting_airtime_number":
+        session["step"] = "awaiting_airtime_amount"
+        session["phone_number"] = transcript.replace(" ", "")
+        prompt = "How much airtime would you like to purchase?"
+    elif session["step"] == "awaiting_airtime_amount":
+        session["step"] = "awaiting_airtime_pin"
+        session["airtime_amount"] = transcript
+        prompt = "Please state your four digit PIN."
+    elif session["step"] == "awaiting_airtime_pin":
+        session["step"] = "awaiting_airtime_confirmation"
+        prompt = f"Please confirm, you want to purchase {session.get('airtime_amount', 'some')} Naira airtime for {session.get('phone_number', 'the number')}. Say 'confirm' to proceed."
+    elif session["step"] == "awaiting_airtime_confirmation":
+        if "confirm" in transcript or "yes" in transcript:
+            session["step"] = "done"
+            prompt = "Airtime purchase successful!"
+        else:
+            prompt = "Say 'confirm' to proceed with the airtime purchase."
+    # Handle data flow
+    elif session["step"] == "awaiting_data_number":
+        session["step"] = "awaiting_data_plan"
+        session["phone_number"] = transcript.replace(" ", "")
+        prompt = "What data plan would you like to purchase? For example, '1GB', '2GB', or '5GB'."
+    elif session["step"] == "awaiting_data_plan":
+        session["step"] = "awaiting_data_pin"
+        session["data_plan"] = transcript
+        prompt = "Please state your four digit PIN."
+    elif session["step"] == "awaiting_data_pin":
+        session["step"] = "awaiting_data_confirmation"
+        prompt = f"Please confirm, you want to purchase {session.get('data_plan', 'a data plan')} for {session.get('phone_number', 'the number')}. Say 'confirm' to proceed."
+    elif session["step"] == "awaiting_data_confirmation":
+        if "confirm" in transcript or "yes" in transcript:
+            session["step"] = "done"
+            prompt = "Data purchase successful!"
+        else:
+            prompt = "Say 'confirm' to proceed with the data purchase."
     else:
-        prompt = "Thank you for using EmphaTech."
+        prompt = "Thank you for using EmphaTech. Is there anything else I can help you with?"
 
     # Generate TTS audio for the prompt
     try:
