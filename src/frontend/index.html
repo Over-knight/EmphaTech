@@ -1,0 +1,179 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EmphaTech - Frontend</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- Replaced direct module src with a small loader that surfaces errors clearly -->
+    <script type="module">
+      // Polyfill `process` for browser-only environments so modules that check process.env don't throw.
+      if (typeof process === 'undefined') {
+        globalThis.process = { env: {} };
+      }
+
+      // --- Start: Hardcoded-login fetch interceptor ---
+      // This intercepts POST requests to common login endpoints and returns a fake token/user.
+      // Hardcoded valid credentials:
+      //   username: "admin"
+      //   password: "password123"
+      (function setupHardcodedLogin() {
+        const loginEndpoints = ['/api/login', '/api/auth/login', '/auth/login', '/login'];
+        const ORIGINAL_FETCH = window.fetch.bind(window);
+
+        async function parseRequestBody(init) {
+          if (!init || !init.body) return null;
+          try {
+            if (init.headers && typeof init.headers.get === 'function') {
+              const ct = init.headers.get('content-type') || '';
+              if (ct.includes('application/json')) {
+                return JSON.parse(init.body);
+              }
+            }
+            // Fallback: try JSON parse anyway
+            return JSON.parse(init.body);
+          } catch {
+            return null;
+          }
+        }
+
+        window.fetch = async function (input, init = {}) {
+          const url = typeof input === 'string' ? input : input?.url || '';
+          const isLogin = loginEndpoints.some(ep => url.endsWith(ep) || url.includes(ep));
+
+          if (isLogin && (init.method || 'GET').toUpperCase() === 'POST') {
+            const body = await parseRequestBody(init) || {};
+            const username = body.username ?? body.email ?? body.user;
+            const password = body.password ?? body.pass;
+
+            const validUser = username === 'admin' && password === 'password123';
+
+            if (validUser) {
+              const fakeResponse = {
+                token: 'fake-jwt-token',
+                user: { id: 1, name: 'Admin', username: 'admin', email: 'admin@example.com' }
+              };
+              try { localStorage.setItem('token', fakeResponse.token); } catch (e) { /* ignore */ }
+
+              return new Response(JSON.stringify(fakeResponse), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' }
+              });
+            } else {
+              return new Response(JSON.stringify({ message: 'Invalid credentials' }), {
+                status: 401,
+                headers: { 'Content-Type': 'application/json' }
+              });
+            }
+          }
+
+          // Pass through all other requests to the real fetch
+          return ORIGINAL_FETCH(input, init);
+        };
+
+        // Expose helper for manual login from console if desired
+        window.__hardLogin = async (u, p) => {
+          if (u === 'admin' && p === 'password123') {
+            const payload = { token: 'fake-jwt-token', user: { id:1, name:'Admin' } };
+            localStorage.setItem('token', payload.token);
+            return payload;
+          }
+          throw new Error('Invalid hardcoded credentials');
+        };
+      })();
+      // --- End: Hardcoded-login fetch interceptor ---
+
+      // Attempt to import the app entry and show clear errors if anything goes wrong.
+      // Update the path below if your entry file is not /src/main.jsx (common alternative: ./src/main.jsx)
+      const ENTRY_PATH = '/src/main.jsx';
+
+      async function boot() {
+        try {
+          // Dynamic import so we can catch module not found / runtime errors
+          await import(ENTRY_PATH);
+          // If your app renders nothing, check the console for runtime errors after this message.
+          console.log(`Imported ${ENTRY_PATH} successfully.`);
+        } catch (err) {
+          console.error('Failed to load frontend entry:', err);
+          const root = document.getElementById('root');
+          if (root) {
+            root.innerHTML = `
+              <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;padding:16px;">
+                <h2 style="color:#c00;margin:0 0 8px 0;">Frontend failed to start</h2>
+                <pre style="white-space:pre-wrap;background:#f8f8f8;padding:12px;border-radius:6px;border:1px solid #eee;color:#111;">
+${String(err).replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+                </pre>
+                <p style="margin:8px 0 0 0;color:#444">Open DevTools Console for stack trace. Verify the entry path (<code>${ENTRY_PATH}</code>) and that the file exists and exports/runs without errors.</p>
+              </div>
+            `;
+          }
+        }
+      }
+
+      // Run boot and also provide a helpful console hint
+      boot();
+      console.log('Boot loader executed. If nothing appears, open DevTools -> Console and Network tabs.');
+
+      // --- Start: runtime pages/routes discovery helper ---
+      // Use window.__listPages() in the console to get a quick report of detected pages/routes.
+      // This helper is best-effort only (can't read your filesystem); it inspects globals and DOM.
+      window.__listPages = async function () {
+        const report = { foundGlobals: {}, anchors: [], dataPageElements: [], notes: [] };
+
+        // Check for common router/route globals
+        const commonNames = ['__ROUTES','routes','ROUTES','__appRoutes','__pages','pages','APP_ROUTES'];
+        for (const name of commonNames) {
+          if (window[name] !== undefined) {
+            report.foundGlobals[name] = window[name];
+          }
+        }
+
+        // Try to detect React Router route definitions on window.__reactRouter (if authors exposed)
+        if (window.__reactRouter) report.foundGlobals.__reactRouter = window.__reactRouter;
+
+        // Collect client-side anchor links that look like internal routes
+        const anchors = Array.from(document.querySelectorAll('a[href]'))
+          .map(a => a.getAttribute('href'))
+          .filter(h => h && h.startsWith('/'))
+          .filter((v,i,arr)=> arr.indexOf(v)===i);
+        report.anchors = anchors;
+
+        // Find elements annotated with data-page or data-route attributes
+        const byData = Array.from(document.querySelectorAll('[data-page],[data-route]')).map(el => {
+          return {
+            tag: el.tagName.toLowerCase(),
+            attrs: {
+              'data-page': el.getAttribute('data-page'),
+              'data-route': el.getAttribute('data-route')
+            },
+            text: (el.textContent || '').trim().slice(0,120)
+          };
+        });
+        report.dataPageElements = byData;
+
+        // Heuristic: check if a login form exists
+        const loginForm = document.querySelector('form[data-testid="login"], form[name="login"], form#login, input[type="password"]');
+        if (loginForm) report.notes.push('Login form DOM detected (password input or form id/name).');
+
+        // Print concise summary to console
+        console.group('Pages/Routes discovery summary');
+        console.info('Globals detected:', Object.keys(report.foundGlobals));
+        if (Object.keys(report.foundGlobals).length) console.debug(report.foundGlobals);
+        console.info('Internal anchor routes found:', report.anchors);
+        if (report.dataPageElements.length) {
+          console.info('Elements with data-page/data-route found:', report.dataPageElements);
+        }
+        if (report.notes.length) console.info('Notes:', report.notes);
+        console.groupEnd();
+
+        // Return the raw report for programmatic inspection
+        return report;
+      };
+
+      console.log('Helper installed: run window.__listPages() to inspect pages/routes at runtime.');
+      // --- End: runtime pages/routes discovery helper ---
+    </script>
+  </body>
+</html>
